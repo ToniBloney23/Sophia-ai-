@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plant Disease AI Trainer (Upload Mode)</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Load TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <!-- Load MobileNet -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+    <!-- Load KNN Classifier -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌿 Plant Disease AI Trainer</h1>
+            <p>Upload images to train your AI and then test it!</p>
+        </header>
+
+        <main>
+            <div class="status-section">
+                <div id="model-status" class="prediction-box">Loading Model...</div>
+            </div>
+
+            <div class="training-section">
+                <h2>1. Train the AI</h2>
+                <div class="controls">
+                    <div class="class-control">
+                        <h3>Healthy Plant</h3>
+                        <input type="file" id="file-a" accept="image/*" multiple class="file-input">
+                        <label for="file-a" class="btn">Upload Images</label>
+                        <p>Examples: <span id="count-a">0</span></p>
+                        <div id="preview-a" class="image-preview-strip"></div>
+                    </div>
+                    <div class="class-control">
+                        <h3>Disease: Yellow Leaf</h3>
+                        <input type="file" id="file-b" accept="image/*" multiple class="file-input">
+                        <label for="file-b" class="btn">Upload Images</label>
+                        <p>Examples: <span id="count-b">0</span></p>
+                        <div id="preview-b" class="image-preview-strip"></div>
+                    </div>
+                    <div class="class-control">
+                        <h3>Disease: Brown Spot</h3>
+                        <input type="file" id="file-c" accept="image/*" multiple class="file-input">
+                        <label for="file-c" class="btn">Upload Images</label>
+                        <p>Examples: <span id="count-c">0</span></p>
+                        <div id="preview-c" class="image-preview-strip"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="testing-section">
+                <h2>2. Test the AI</h2>
+                <div class="test-control">
+                    <h3>Upload an image to test</h3>
+                    <input type="file" id="file-test" accept="image/*" class="file-input">
+                    <label for="file-test" class="btn btn-test">Upload Test Image</label>
+                    
+                    <div class="result-container">
+                        <img id="test-image" style="display:none;" />
+                        <div id="prediction-result" class="prediction-box">Waiting for image...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="instructions">
+                <h3>How to use:</h3>
+                <ol>
+                    <li>Wait for the model to load.</li>
+                    <li><strong>Train:</strong> Click "Upload Images" for each category and select one or more photos of plants fitting that description.</li>
+                    <li><strong>Test:</strong> Upload a new image in the "Test the AI" section to see if it detects the disease correctly.</li>
+                </ol>
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
