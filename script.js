@@ -1,3 +1,57 @@
+const DB_NAME = 'plant_ai_db';
+const DB_VERSION = 1;
+const STORE_NAME = 'training_data';
+
+// --- IndexedDB Helpers ---
+const openDB = () => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onerror = (event) => reject("Database error: " + event.target.error);
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+        request.onsuccess = (event) => resolve(event.target.result);
+    });
+};
+
+const saveToDB = async (key, value) => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], "readwrite");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(value, key);
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => reject(e);
+    });
+};
+
+const loadFromDB = async (key) => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], "readonly");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(key);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = (e) => reject(e);
+    });
+};
+
+const clearDB = async () => {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], "readwrite");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.clear();
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => reject(e);
+    });
+};
+
+// --- Main App Logic ---
+
 async function run() {
     const classifier = knnClassifier.create();
     let net;
@@ -9,7 +63,7 @@ async function run() {
     try {
         net = await mobilenet.load();
         console.log('Successfully loaded model');
-        statusElement.innerText = 'Model Loaded. Ready to train.';
+        statusElement.innerText = 'Model Loaded. Restoring data...';
         statusElement.style.color = 'var(--primary-color)';
     } catch (e) {
         console.error("Error loading model:", e);
@@ -18,10 +72,83 @@ async function run() {
         return;
     }
 
-    // Counts for UI
-    const counts = { 0: 0, 1: 0, 2: 0 };
+    // State for UI
+    let counts = { 0: 0, 1: 0, 2: 0 };
+    let previewImages = { 0: [], 1: [], 2: [] };
 
-    // Helper to read file as image element
+    // --- Persistence Functions ---
+
+    const saveState = async () => {
+        // 1. Save Classifier Dataset
+        const dataset = classifier.getClassifierDataset();
+        const datasetObj = {};
+        Object.keys(dataset).forEach((key) => {
+            const data = dataset[key].dataSync();
+            // Convert TypedArray to normal Array for JSON serialization if needed, 
+            // but IDB can store TypedArrays directly.
+            datasetObj[key] = {
+                data: data,
+                shape: dataset[key].shape
+            };
+        });
+
+        // 2. Save Images and Counts
+        await saveToDB('classifier_dataset', datasetObj);
+        await saveToDB('preview_images', previewImages);
+        await saveToDB('counts', counts);
+        console.log("Saved state to DB");
+    };
+
+    const loadState = async () => {
+        try {
+            // 1. Load Classifier
+            const datasetObj = await loadFromDB('classifier_dataset');
+            if (datasetObj) {
+                const dataset = {};
+                Object.keys(datasetObj).forEach((key) => {
+                    const { data, shape } = datasetObj[key];
+                    dataset[key] = tf.tensor(data, shape);
+                });
+                classifier.setClassifierDataset(dataset);
+            }
+
+            // 2. Load UI State
+            const savedCounts = await loadFromDB('counts');
+            const savedPreviews = await loadFromDB('preview_images');
+
+            if (savedCounts) counts = savedCounts;
+            if (savedPreviews) previewImages = savedPreviews;
+
+            // Update DOM
+            updateUI();
+            
+            statusElement.innerText = 'Model Ready (Data Restored)';
+        } catch (e) {
+            console.error("Error loading state", e);
+            statusElement.innerText = 'Model Ready (New Session)';
+        }
+    };
+
+    const updateUI = () => {
+        // Update counts
+        document.getElementById('count-a').innerText = counts[0];
+        document.getElementById('count-b').innerText = counts[1];
+        document.getElementById('count-c').innerText = counts[2];
+
+        // Update Previews
+        ['preview-a', 'preview-b', 'preview-c'].forEach((id, index) => {
+            const container = document.getElementById(id);
+            container.innerHTML = ''; // clear
+            previewImages[index].forEach(src => {
+                const img = document.createElement('img');
+                img.src = src;
+                container.appendChild(img);
+            });
+        });
+    };
+
+    // --- Helper Functions ---
+
     const readImage = (file) => {
         return new Promise((resolve) => {
             const reader = new FileReader();
@@ -34,16 +161,7 @@ async function run() {
         });
     };
 
-    // Helper to add image to preview
-    const addToPreview = (imgSrc, previewId) => {
-        const previewContainer = document.getElementById(previewId);
-        const img = document.createElement('img');
-        img.src = imgSrc;
-        previewContainer.appendChild(img);
-    };
-
-    // Handle training uploads
-    const handleTrainUpload = async (event, classId, countId, previewId) => {
+    const handleTrainUpload = async (event, classId) => {
         const files = event.target.files;
         if (!files.length) return;
 
@@ -57,36 +175,46 @@ async function run() {
             const activation = net.infer(img, true);
             classifier.addExample(activation, classId);
             
-            // Update UI
+            // Update State
             counts[classId]++;
-            document.getElementById(countId).innerText = counts[classId];
-            addToPreview(img.src, previewId);
+            previewImages[classId].push(img.src);
             
-            // Clean up tensor
-            // activation.dispose(); // Note: KNN Classifier might need the tensor, but usually it stores what it needs. 
-            // Actually, in TFJS KNN, addExample keeps a reference. We should NOT dispose activation immediately if we passed it?
-            // Checking docs: "It keeps a reference to the activation..." -> Wait, if we pass a tensor, we usually shouldn't dispose it IF the classifier doesn't make a copy.
-            // However, typical usage examples often don't dispose explicitly or rely on tf.tidy. 
-            // For safety in this loop, let's rely on garbage collection for the JS objects but we should be careful with GPU memory.
-            // `net.infer` returns a tensor. `classifier.addExample` stores it. 
-            // So we do NOT dispose `activation` here.
+            // Cleanup tensor? 
+            // Note: In a loop, it's good practice to dispose intermediate tensors if not needed.
+            // classifier.addExample keeps what it needs.
+            // But we need to make sure we don't leak memory if we run this a lot.
+            // `net.infer` returns a tensor. 
+            // For now, relying on TFJS automatic management or manual disposal if performance drops.
         }
         
-        statusElement.innerText = 'Model Updated!';
+        updateUI();
+        await saveState(); // Save after batch
+        
+        statusElement.innerText = 'Model Updated & Saved!';
         setTimeout(() => {
             statusElement.innerText = 'Ready to train or predict.';
         }, 2000);
         
-        // Clear input
         event.target.value = '';
     };
 
-    // Event Listeners for Training
-    document.getElementById('file-a').addEventListener('change', (e) => handleTrainUpload(e, 0, 'count-a', 'preview-a'));
-    document.getElementById('file-b').addEventListener('change', (e) => handleTrainUpload(e, 1, 'count-b', 'preview-b'));
-    document.getElementById('file-c').addEventListener('change', (e) => handleTrainUpload(e, 2, 'count-c', 'preview-c'));
+    // --- Event Listeners ---
 
-    // Handle Prediction
+    document.getElementById('file-a').addEventListener('change', (e) => handleTrainUpload(e, 0));
+    document.getElementById('file-b').addEventListener('change', (e) => handleTrainUpload(e, 1));
+    document.getElementById('file-c').addEventListener('change', (e) => handleTrainUpload(e, 2));
+
+    document.getElementById('clear-data-btn').addEventListener('click', async () => {
+        if(confirm("Are you sure you want to delete all training data?")) {
+            classifier.clearAllClasses();
+            counts = { 0: 0, 1: 0, 2: 0 };
+            previewImages = { 0: [], 1: [], 2: [] };
+            await clearDB();
+            updateUI();
+            statusElement.innerText = 'Training data cleared.';
+        }
+    });
+
     document.getElementById('file-test').addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -122,9 +250,11 @@ async function run() {
             resultBox.innerText = "Error during prediction.";
         }
         
-        // Clear input so same file can be selected again if needed
         e.target.value = '';
     });
+
+    // --- Initialize ---
+    await loadState();
 }
 
 run();
